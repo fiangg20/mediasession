@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "mediasession",
+  "version": "1.0",
+  "name": "Media Session",
+  "description": "Control the Windows media session from inside Minecraft with a sleek now playing panel.",
+  "authors": [],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.mediasession.MediaSessionClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
