@@ -14,24 +14,27 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvents;
 
 final class MediaScreen extends Screen {
-    private static final int W = 300;
-    private static final int H = 152;
-    private static final int PAD = 14;
-    private static final int ART = 84;
+    private static final int W = 348;
+    private static final int H = 116;
+    private static final int COVER = 116;
     private static final int PREV = 0;
     private static final int PLAY = 1;
     private static final int NEXT = 2;
     private static final int BAR = 3;
-    private static final int CYCLE = 4;
+    private static final int SESSION = 4;
+    private static final int MUTE = 5;
 
     private final long opened = System.nanoTime();
-    private final float[] hover = new float[5];
+    private final float[] hover = new float[6];
     private long last = opened;
-    private float knob;
     private boolean dragging;
     private double dragFraction;
     private int x;
     private int y;
+    private int sessionX;
+    private int sessionW;
+    private int muteX;
+    private int muteW;
 
     MediaScreen() {
         super(Component.literal("Media"));
@@ -43,46 +46,71 @@ final class MediaScreen extends Screen {
         y = (this.height - H) / 2;
     }
 
-    private int barX() {
-        return x + PAD + 36;
+    private int x0() {
+        return x + COVER + 14;
     }
 
-    private int barW() {
-        return W - 2 * PAD - 72;
+    private int cw() {
+        return W - COVER - 28;
     }
 
-    private int ctrlX() {
-        return x + W / 2;
+    private int prevX() {
+        return x + W - 78;
+    }
+
+    private int nextX() {
+        return x + W - 20;
+    }
+
+    private int playL() {
+        return x + W - 62;
     }
 
     private int ctrlY() {
-        return y + 131;
+        return y + 91;
     }
 
-    private int cycleX() {
-        return x + W - PAD - 36;
+    private String sessionLabel(MediaState s) {
+        int index = Math.max(0, s.sessions().indexOf(s.id())) + 1;
+        return index + "/" + s.sessions().size() + " >";
     }
 
-    private static boolean near(double mx, double my, int cx, int cy, int r) {
-        double dx = mx - cx;
-        double dy = my - cy;
-        return dx * dx + dy * dy <= (double) r * r;
+    private void layoutChips(MediaState s) {
+        int right = x + W - 14;
+        if (s.active() && s.sessions().size() > 1) {
+            sessionW = this.font.width(sessionLabel(s));
+            sessionX = right - sessionW;
+            right = sessionX - 14;
+        } else {
+            sessionW = 0;
+            sessionX = 0;
+        }
+        muteW = 10 + this.font.width("MUTE MUSIC");
+        muteX = right - muteW;
+    }
+
+    private boolean overRow(double mx, double my, int cx, int cw) {
+        return cw > 0 && mx >= cx - 3 && mx <= cx + cw + 3 && my >= y + 7 && my <= y + 22;
+    }
+
+    private boolean overPlay(double mx, double my) {
+        return mx >= playL() && mx < playL() + 26 && my >= y + 78 && my < y + 104;
+    }
+
+    private boolean overSkip(double mx, double my, int cx) {
+        return Math.abs(mx - cx) <= 12 && Math.abs(my - ctrlY()) <= 13;
     }
 
     private boolean overBar(double mx, double my) {
-        return mx >= barX() - 4 && mx <= barX() + barW() + 4 && my >= y + 101 && my <= y + 119;
+        return mx >= x + COVER && mx <= x + W && my >= y + H - 10 && my <= y + H;
     }
 
-    private boolean overCycle(double mx, double my) {
-        return mx >= cycleX() && mx <= cycleX() + 36 && my >= y + 12 && my <= y + 26;
-    }
-
-    private boolean overCard(double mx, double my) {
+    private boolean overPanel(double mx, double my) {
         return mx >= x && mx <= x + W && my >= y && my <= y + H;
     }
 
     private double fraction(double mx) {
-        return Ui.clamp01((mx - barX()) / barW());
+        return Ui.clamp01((mx - (x + COVER)) / (double) (W - COVER));
     }
 
     private static void click() {
@@ -96,143 +124,138 @@ final class MediaScreen extends Screen {
         long now = System.nanoTime();
         double dt = Math.min(0.1, (now - last) / 1.0e9);
         last = now;
-        double open = Math.min(1.0, (now - opened) / 260.0e6);
-        double e = 1 - Math.pow(1 - open, 3);
-        int top = y + (int) Math.round((1 - e) * 16);
+        double open = Math.min(1.0, (now - opened) / 320.0e6);
+        double e = 1 - Math.pow(1 - open, 4);
 
-        MediaBridge bridge = MediaBridge.get();
-        MediaState s = bridge.state();
+        MediaState s = MediaBridge.get().state();
         Identifier art = ArtTexture.update(s);
         int accent = Ui.accent(s.accent());
+        layoutChips(s);
 
-        g.fillGradient(0, 0, this.width, this.height, Ui.alpha(accent, 0.22 * e), Ui.alpha(0xFF000000, 0.35 * e));
-
-        boolean[] over = new boolean[5];
+        boolean[] over = new boolean[6];
+        over[MUTE] = overRow(mouseX, mouseY, muteX, muteW);
         if (s.active()) {
-            over[PREV] = near(mouseX, mouseY, ctrlX() - 54, ctrlY(), 17);
-            over[PLAY] = near(mouseX, mouseY, ctrlX(), ctrlY(), 17);
-            over[NEXT] = near(mouseX, mouseY, ctrlX() + 54, ctrlY(), 17);
-            over[BAR] = overBar(mouseX, mouseY);
-            over[CYCLE] = overCycle(mouseX, mouseY) && s.sessions().size() > 1;
+            over[PREV] = overSkip(mouseX, mouseY, prevX());
+            over[PLAY] = overPlay(mouseX, mouseY);
+            over[NEXT] = overSkip(mouseX, mouseY, nextX());
+            over[BAR] = overBar(mouseX, mouseY) || dragging;
+            over[SESSION] = overRow(mouseX, mouseY, sessionX, sessionW);
         }
-        double ease = 1 - Math.exp(-dt * 16);
+        double ease = 1 - Math.exp(-dt * 18);
         for (int i = 0; i < hover.length; i++) {
             hover[i] += (float) (((over[i] ? 1 : 0) - hover[i]) * ease);
         }
-        knob += (float) ((((over[BAR] || dragging) ? 1 : 0) - knob) * ease);
 
-        for (int i = 1; i <= 8; i++) {
-            Ui.roundRect(g, x - i, top - i + 4, W + 2 * i, H + 2 * i, 16 + i, Ui.alpha(0xFF000000, 0.045));
+        boolean wipe = open < 1.0;
+        if (wipe) {
+            g.enableScissor(x - 2, y - 2, x - 2 + (int) Math.round((W + 4) * e), y + H + 2);
         }
-        Ui.roundRect(g, x - 1, top - 1, W + 2, H + 2, 17, Ui.BORDER);
-        Ui.roundRect(g, x, top, W, H, 16, Ui.CARD);
-        Ui.roundRect(g, x + 6, top + 6, W - 12, 98, 12, Ui.alpha(accent, 0.10));
+        drawPanel(g, s, art, accent, now);
+        if (wipe) {
+            g.disableScissor();
+        }
+    }
+
+    private void drawPanel(GuiGraphicsExtractor g, MediaState s, Identifier art, int accent, long now) {
+        g.fill(x, y, x + W, y + H, Ui.PANEL);
+
+        if (s.active() && art != null) {
+            g.blit(RenderPipelines.GUI_TEXTURED, art, x, y, 0, 0, COVER, COVER, 256, 256, 256, 256);
+        } else {
+            g.fill(x, y, x + COVER, y + COVER, Ui.COVER_BG);
+            String letter = s.active() ? Ui.initial(s.title()) : "-";
+            int lw = Ui.width(this.font, letter, true) * 4;
+            Ui.scaledText(g, this.font, letter, x + (COVER - lw) / 2, y + (COVER - 36) / 2, 4.0f, 0xFF34343A, true);
+        }
+        g.outline(x, y, W, H, Ui.BORDER);
+
+        int x0 = x0();
+        int cw = cw();
+
+        String source = s.active() ? Ui.prettySource(s.id()).toUpperCase(Locale.ROOT) : "MEDIA";
+        boolean playing = s.active() && s.playing();
+        if (playing) {
+            Ui.dot(g, x0, y + 12, true, Ui.alpha(accent, 0.65 + 0.35 * Math.sin(now / 1.0e9 * 4.0)));
+        } else {
+            Ui.dot(g, x0, y + 12, false, Ui.DIM);
+        }
+        int sourceMax = muteX - 12 - (x0 + 10);
+        Ui.text(g, this.font, Ui.fit(this.font, source, sourceMax, false), x0 + 10, y + 10, Ui.DIM, false);
+        drawChips(g, s);
 
         if (!s.active()) {
-            drawIdle(g, top, accent, now, bridge.available());
-        } else {
-            drawActive(g, top, s, art, accent, now);
-        }
-
-        String hint = "Space  play / pause    Left / Right  seek 5s    Esc  close";
-        g.text(this.font, hint, x + (W - this.font.width(hint)) / 2, top + H + 10, 0x66FFFFFF, false);
-    }
-
-    private void drawIdle(GuiGraphicsExtractor g, int top, int accent, long now, boolean available) {
-        int cx = x + W / 2;
-        Ui.equalizer(g, cx - 14, top + 52, 5, 4, 2, 26, Ui.alpha(accent, 0.55), now, false);
-        String title = available ? "Nothing playing" : "Media bridge offline";
-        String sub = available ? "Start something in any media app" : "Windows with PowerShell is required";
-        Ui.text(g, this.font, title, cx - Ui.width(this.font, title, true) / 2, top + 76, Ui.TEXT, true, false);
-        g.text(this.font, sub, cx - this.font.width(sub) / 2, top + 92, Ui.DIM, false);
-    }
-
-    private void drawActive(GuiGraphicsExtractor g, int top, MediaState s, Identifier art, int accent, long now) {
-        int ax = x + PAD;
-        int ay = top + PAD;
-        Ui.roundRect(g, ax - 2, ay - 2, ART + 4, ART + 4, 16, Ui.alpha(accent, 0.18));
-        if (art != null) {
-            g.blit(RenderPipelines.GUI_TEXTURED, art, ax, ay, 0, 0, ART, ART, 256, 256, 256, 256);
-        } else {
-            Ui.placeholder(g, ax, ay, ART, accent);
-        }
-
-        int tx = ax + ART + 12;
-        int tw = x + W - PAD - tx;
-        String source = Ui.prettySource(s.id()).toUpperCase(Locale.ROOT);
-        Ui.text(g, this.font, source, tx, top + 17, accent, false, false);
-        if (s.playing()) {
-            Ui.equalizer(g, tx + this.font.width(source) + 6, top + 25, 3, 2, 1, 8, accent, now, true);
-        }
-        if (s.sessions().size() > 1) {
-            drawCycle(g, top, s);
+            Ui.marquee(g, this.font, "Nothing playing", x0, y + 25, cw, 2.0f, Ui.TEXT, true, now);
+            String sub = MediaBridge.get().available()
+                    ? "Start something in any media app"
+                    : "Needs Windows with PowerShell";
+            g.text(this.font, sub, x0, y + 51, Ui.SUBTLE, false);
+            return;
         }
 
         String title = s.title().isEmpty() ? "Unknown title" : s.title();
-        Ui.text(g, this.font, Ui.fit(this.font, title, tw, true), tx, top + 31, Ui.TEXT, true, false);
+        Ui.marquee(g, this.font, title, x0, y + 25, cw, 2.0f, Ui.TEXT, true, now);
         if (!s.artist().isEmpty()) {
-            g.text(this.font, Ui.fit(this.font, s.artist(), tw, false), tx, top + 45, Ui.SUBTLE, false);
+            g.text(this.font, Ui.fit(this.font, s.artist(), cw, false), x0, y + 49, Ui.SUBTLE, false);
         }
         if (!s.album().isEmpty()) {
-            g.text(this.font, Ui.fit(this.font, s.album(), tw, false), tx, top + 58, Ui.DIM, false);
+            g.text(this.font, Ui.fit(this.font, s.album(), cw, false), x0, y + 61, Ui.DIM, false);
         }
 
         double dur = s.duration();
         double shown = dragging ? dragFraction * dur : s.live();
         double frac = dur > 0 ? Ui.clamp01(shown / dur) : 0;
-        int bx = barX();
-        int bw = barW();
-        int by = top + 108;
-        Ui.roundRect(g, bx, by, bw, 4, 2, Ui.TRACK);
+
+        String cur = Ui.time(shown);
+        String total = " / " + (dur > 0 ? Ui.time(dur) : "--:--");
+        g.text(this.font, cur, x0, y + 87, Ui.TEXT, false);
+        g.text(this.font, total, x0 + this.font.width(cur), y + 87, Ui.DIM, false);
+
+        drawSkip(g, prevX(), false, s.canPrevious(), hover[PREV]);
+        drawSkip(g, nextX(), true, s.canNext(), hover[NEXT]);
+        drawPlay(g, s, accent, hover[PLAY]);
+
+        int bx = x + COVER;
+        int bw = W - COVER;
+        int bh = 2 + Math.round(2 * hover[BAR]);
+        g.fill(bx, y + H - bh, bx + bw, y + H, Ui.TRACK);
         int fw = (int) Math.round(bw * frac);
         if (fw > 0) {
-            Ui.roundRect(g, bx, by, Math.max(fw, 4), 4, 2, accent);
+            g.fill(bx, y + H - bh, bx + fw, y + H, accent);
         }
-        int kd = 2 * Math.round(knob * 3.5f);
-        if (kd >= 2 && dur > 0) {
-            Ui.circle(g, bx + fw, by + 2, kd, Ui.WHITE);
+        if (hover[BAR] > 0.05f && dur > 0) {
+            g.fill(bx + fw - 1, y + H - 9, bx + fw + 1, y + H, Ui.alpha(Ui.PURE, hover[BAR]));
         }
-        String left = Ui.time(shown);
-        String right = dur > 0 ? Ui.time(dur) : "--:--";
-        g.text(this.font, left, x + PAD, by - 2, Ui.SUBTLE, false);
-        g.text(this.font, right, x + W - PAD - this.font.width(right), by - 2, Ui.SUBTLE, false);
-
-        int cx = ctrlX();
-        int cy = top + 131;
-        drawSkip(g, cx - 54, cy, false, s.canPrevious(), hover[PREV]);
-        drawSkip(g, cx + 54, cy, true, s.canNext(), hover[NEXT]);
-        drawPlay(g, cx, cy, s, accent, hover[PLAY]);
     }
 
-    private void drawCycle(GuiGraphicsExtractor g, int top, MediaState s) {
-        int px = cycleX();
-        int py = top + 12;
-        float hv = hover[CYCLE];
-        Ui.roundRect(g, px, py, 36, 14, 7, Ui.alpha(Ui.WHITE, 0.07 + 0.10 * hv));
-        int index = Math.max(0, s.sessions().indexOf(s.id())) + 1;
-        String label = index + "/" + s.sessions().size();
-        g.text(this.font, label, px + 7, py + 3, Ui.mix(Ui.SUBTLE, Ui.WHITE, hv), false);
-        Ui.triangle(g, px + 27, py + 4, 4, 6, true, Ui.mix(Ui.DIM, Ui.WHITE, hv));
+    private void drawChips(GuiGraphicsExtractor g, MediaState s) {
+        boolean on = MusicMute.enabled();
+        int color = Ui.mix(on ? Ui.SUBTLE : Ui.DIM, Ui.TEXT, hover[MUTE]);
+        g.outline(muteX, y + 12, 5, 5, color);
+        if (on) {
+            g.fill(muteX + 1, y + 13, muteX + 4, y + 16, color);
+        }
+        g.text(this.font, "MUTE MUSIC", muteX + 10, y + 10, color, false);
+        if (sessionW > 0) {
+            g.text(this.font, sessionLabel(s), sessionX, y + 10, Ui.mix(Ui.DIM, Ui.TEXT, hover[SESSION]), false);
+        }
     }
 
-    private void drawSkip(GuiGraphicsExtractor g, int cx, int cy, boolean forward, boolean enabled, float hv) {
-        if (hv > 0.01f && enabled) {
-            Ui.circle(g, cx, cy, 32, Ui.alpha(Ui.WHITE, 0.10 * hv));
-        }
-        int color = enabled ? Ui.mix(Ui.SUBTLE, Ui.WHITE, hv) : Ui.alpha(Ui.DIM, 0.55);
-        Ui.skip(g, cx, cy, 12, forward, color);
+    private void drawSkip(GuiGraphicsExtractor g, int cx, boolean forward, boolean enabled, float hv) {
+        int color = enabled ? Ui.mix(Ui.SUBTLE, Ui.PURE, hv) : Ui.alpha(Ui.DIM, 0.7);
+        Ui.skip(g, cx, ctrlY(), 12, forward, color);
     }
 
-    private void drawPlay(GuiGraphicsExtractor g, int cx, int cy, MediaState s, int accent, float hv) {
-        if (hv > 0.01f && s.canToggle()) {
-            Ui.circle(g, cx, cy, 38, Ui.alpha(accent, 0.22 * hv));
-        }
-        int fill = s.canToggle() ? Ui.mix(0xFFE6E6EE, Ui.WHITE, hv) : Ui.alpha(Ui.WHITE, 0.35);
-        Ui.circle(g, cx, cy, 32, fill);
+    private void drawPlay(GuiGraphicsExtractor g, MediaState s, int accent, float hv) {
+        int left = playL();
+        int top = y + 78;
+        int fill = s.canToggle() ? Ui.mix(Ui.TEXT, accent, hv * 0.85) : Ui.alpha(Ui.TEXT, 0.35);
+        g.fill(left, top, left + 26, top + 26, fill);
+        int cx = left + 13;
+        int cy = top + 13;
         if (s.playing()) {
             Ui.pause(g, cx, cy, 12, Ui.DARK);
         } else {
-            Ui.play(g, cx, cy, 14, Ui.DARK);
+            Ui.play(g, cx, cy, 12, Ui.DARK);
         }
     }
 
@@ -243,27 +266,33 @@ final class MediaScreen extends Screen {
             MediaState s = bridge.state();
             double mx = event.x();
             double my = event.y();
-            if (!overCard(mx, my)) {
+            layoutChips(s);
+            if (!overPanel(mx, my)) {
                 this.onClose();
                 return true;
             }
+            if (overRow(mx, my, muteX, muteW)) {
+                click();
+                MusicMute.setEnabled(!MusicMute.enabled());
+                return true;
+            }
             if (s.active()) {
-                if (near(mx, my, ctrlX() - 54, ctrlY(), 17) && s.canPrevious()) {
+                if (overSkip(mx, my, prevX()) && s.canPrevious()) {
                     click();
                     bridge.previous();
                     return true;
                 }
-                if (near(mx, my, ctrlX() + 54, ctrlY(), 17) && s.canNext()) {
+                if (overSkip(mx, my, nextX()) && s.canNext()) {
                     click();
                     bridge.next();
                     return true;
                 }
-                if (near(mx, my, ctrlX(), ctrlY(), 17) && s.canToggle()) {
+                if (overPlay(mx, my) && s.canToggle()) {
                     click();
                     bridge.toggle();
                     return true;
                 }
-                if (overCycle(mx, my) && s.sessions().size() > 1) {
+                if (overRow(mx, my, sessionX, sessionW)) {
                     click();
                     bridge.cycleSession();
                     return true;

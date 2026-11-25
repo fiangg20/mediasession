@@ -27,6 +27,7 @@ public final class MediaSessionClient implements ClientModInitializer {
         PREVIOUS = key("previous", InputConstants.KEY_F7);
         NEXT = key("next", InputConstants.KEY_F8);
 
+        MusicMute.init();
         MediaBridge.start();
 
         HudElementRegistry.attachElementBefore(
@@ -35,7 +36,10 @@ public final class MediaSessionClient implements ClientModInitializer {
                 MediaHud::render);
 
         ClientTickEvents.END_CLIENT_TICK.register(MediaSessionClient::tick);
-        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> MediaBridge.get().shutdown());
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            MusicMute.shutdown();
+            MediaBridge.get().shutdown();
+        });
     }
 
     private static KeyMapping key(String name, int code) {
@@ -44,6 +48,7 @@ public final class MediaSessionClient implements ClientModInitializer {
     }
 
     private static void tick(Minecraft client) {
+        MusicMute.tick(client);
         while (OPEN.consumeClick()) {
             if (client.gui.screen() == null) {
                 client.gui.setScreen(new MediaScreen());

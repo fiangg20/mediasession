@@ -29,57 +29,89 @@ function Emit($obj) {
     [Console]::Out.Flush()
 }
 
+function Log($message) {
+    try {
+        Add-Content -LiteralPath (Join-Path $OutDir 'bridge.log') -Value ((Get-Date -Format 'HH:mm:ss') + ' ' + $message)
+    }
+    catch { }
+}
+
+function Read-Bytes($ref) {
+    $ras = Await ($ref.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
+    if ($null -eq $ras) { return $null }
+    $net = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($ras)
+    $ms = New-Object System.IO.MemoryStream
+    $net.CopyTo($ms)
+    $net.Dispose()
+    return , $ms.ToArray()
+}
+
+function Load-Image($bytes) {
+    try {
+        $gdi = New-Object System.IO.MemoryStream(, $bytes)
+        return [System.Drawing.Image]::FromStream($gdi)
+    }
+    catch { Log ('gdi decode failed: ' + $_.Exception.Message) }
+    try {
+        Add-Type -AssemblyName PresentationCore
+        $in = New-Object System.IO.MemoryStream(, $bytes)
+        $decoder = [System.Windows.Media.Imaging.BitmapDecoder]::Create($in, [System.Windows.Media.Imaging.BitmapCreateOptions]::PreservePixelFormat, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+        $encoder = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
+        $encoder.Frames.Add($decoder.Frames[0])
+        $png = New-Object System.IO.MemoryStream
+        $encoder.Save($png)
+        $png.Position = 0
+        return [System.Drawing.Image]::FromStream($png)
+    }
+    catch { Log ('wic decode failed: ' + $_.Exception.Message) }
+    return $null
+}
+
 function Save-Thumb($props, $dir, $name) {
-    $result = @{ file = ''; accent = 0 }
-    $net = $null; $img = $null; $flat = $null; $out = $null
-    $fg = $null; $og = $null; $brush = $null; $path = $null
+    $result = @{ file = ''; accent = 0; final = $false }
+    $img = $null; $flat = $null; $gfx = $null
     try {
         $ref = $props.Thumbnail
         if ($null -eq $ref) { return $result }
-        $ras = Await ($ref.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
-        if ($null -eq $ras) { return $result }
-        $net = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($ras)
-        $img = [System.Drawing.Image]::FromStream($net)
+        $bytes = Read-Bytes $ref
+        if ($null -eq $bytes -or $bytes.Length -eq 0) {
+            Log 'thumbnail stream empty'
+            return $result
+        }
+        Log ('thumbnail bytes: ' + $bytes.Length)
+        $img = Load-Image $bytes
+        if ($null -eq $img) {
+            $result.final = $true
+            return $result
+        }
         $size = 256
         $flat = New-Object System.Drawing.Bitmap($size, $size)
-        $fg = [System.Drawing.Graphics]::FromImage($flat)
-        $fg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-        $fg.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $gfx = [System.Drawing.Graphics]::FromImage($flat)
+        $gfx.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $gfx.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
         $scale = [Math]::Max($size / $img.Width, $size / $img.Height)
         $w = [single]($img.Width * $scale)
         $h = [single]($img.Height * $scale)
-        $fg.DrawImage($img, [single](($size - $w) / 2), [single](($size - $h) / 2), $w, $h)
+        $gfx.DrawImage($img, [single](($size - $w) / 2), [single](($size - $h) / 2), $w, $h)
 
-        $out = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-        $og = [System.Drawing.Graphics]::FromImage($out)
-        $og.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $d = [single]56
-        $s = [single]$size
-        $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-        $path.AddArc([single]0, [single]0, $d, $d, [single]180, [single]90)
-        $path.AddArc([single]($s - $d), [single]0, $d, $d, [single]270, [single]90)
-        $path.AddArc([single]($s - $d), [single]($s - $d), $d, $d, [single]0, [single]90)
-        $path.AddArc([single]0, [single]($s - $d), $d, $d, [single]90, [single]90)
-        $path.CloseFigure()
-        $brush = New-Object System.Drawing.TextureBrush($flat)
-        $og.FillPath($brush, $path)
-
-        $r = 0; $g = 0; $b = 0
-        for ($x = 0; $x -lt 16; $x++) {
-            for ($y = 0; $y -lt 16; $y++) {
-                $p = $flat.GetPixel($x * 16 + 8, $y * 16 + 8)
-                $r += $p.R; $g += $p.G; $b += $p.B
+        $sumR = 0; $sumG = 0; $sumB = 0
+        for ($ix = 0; $ix -lt 16; $ix++) {
+            for ($iy = 0; $iy -lt 16; $iy++) {
+                $px = $flat.GetPixel($ix * 16 + 8, $iy * 16 + 8)
+                $sumR += $px.R; $sumG += $px.G; $sumB += $px.B
             }
         }
-        $result.accent = (([int]($r / 256)) -shl 16) -bor (([int]($g / 256)) -shl 8) -bor ([int]($b / 256))
+        $result.accent = (([int]($sumR / 256)) -shl 16) -bor (([int]($sumG / 256)) -shl 8) -bor ([int]($sumB / 256))
 
         $file = Join-Path $dir $name
-        $out.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
+        $flat.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
         $result.file = $file
+        $result.final = $true
+        Log ('thumbnail saved: ' + $file)
     }
-    catch { }
+    catch { Log ('thumbnail failed: ' + $_.Exception.Message) }
     finally {
-        foreach ($o in @($brush, $path, $og, $fg, $out, $flat, $img, $net)) {
+        foreach ($o in @($gfx, $flat, $img)) {
             if ($null -ne $o) { $o.Dispose() }
         }
     }
@@ -90,6 +122,7 @@ if (-not (Test-Path -LiteralPath $OutDir)) {
     New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 }
 Get-ChildItem -LiteralPath $OutDir -Filter 'art_*.png' | Remove-Item -Force
+Set-Content -LiteralPath (Join-Path $OutDir 'bridge.log') -Value ''
 
 $manager = $null
 while ($null -eq $manager) {
@@ -198,12 +231,13 @@ while ($true) {
                     $thumbFile = ''
                     $thumbAccent = 0
                 }
-                if ($thumbFile -eq '' -and $thumbTries -lt 8 -and $null -ne $props) {
+                if ($thumbFile -eq '' -and $thumbTries -lt 40 -and $null -ne $props) {
                     $thumbTries++
                     $counter++
                     $t = Save-Thumb $props $OutDir ('art_' + $counter + '.png')
                     $thumbFile = [string]$t.file
                     $thumbAccent = [int]$t.accent
+                    if ($t.final -and $thumbFile -eq '') { $thumbTries = 99 }
                 }
 
                 $start = $tl.StartTime.TotalSeconds

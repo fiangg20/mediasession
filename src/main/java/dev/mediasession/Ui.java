@@ -7,15 +7,15 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 
 final class Ui {
-    static final int WHITE = 0xFFFFFFFF;
-    static final int TEXT = 0xFFF4F4F8;
-    static final int SUBTLE = 0xFFB6B6C2;
-    static final int DIM = 0xFF7C7C8A;
-    static final int DARK = 0xFF121216;
-    static final int CARD = 0xEC111116;
-    static final int BORDER = 0x28FFFFFF;
-    static final int TRACK = 0x33FFFFFF;
-    static final int DEFAULT_ACCENT = 0xFF8B7CF6;
+    static final int PURE = 0xFFFFFFFF;
+    static final int TEXT = 0xFFF2F2F2;
+    static final int SUBTLE = 0xFF9C9CA3;
+    static final int DIM = 0xFF5F5F66;
+    static final int DARK = 0xFF0A0A0B;
+    static final int PANEL = 0xF20A0A0B;
+    static final int BORDER = 0x33FFFFFF;
+    static final int TRACK = 0x2EFFFFFF;
+    static final int COVER_BG = 0xFF161618;
 
     private Ui() {
     }
@@ -66,27 +66,6 @@ final class Ui {
         }
     }
 
-    static void roundRect(GuiGraphicsExtractor g, int x, int y, int w, int h, int radius, int color) {
-        int r = Math.max(0, Math.min(radius, Math.min(w, h) / 2));
-        if (r == 0) {
-            g.fill(x, y, x + w, y + h, color);
-            return;
-        }
-        if (h - 2 * r > 0) {
-            g.fill(x, y + r, x + w, y + h - r, color);
-        }
-        for (int row = 0; row < r; row++) {
-            double dy = r - row - 0.5;
-            double inset = r - Math.sqrt(r * (double) r - dy * dy);
-            hspan(g, y + row, x + inset, x + w - inset, color);
-            hspan(g, y + h - 1 - row, x + inset, x + w - inset, color);
-        }
-    }
-
-    static void circle(GuiGraphicsExtractor g, int cx, int cy, int diameter, int color) {
-        roundRect(g, cx - diameter / 2, cy - diameter / 2, diameter, diameter, diameter / 2, color);
-    }
-
     static void triangle(GuiGraphicsExtractor g, int x, int y, int w, int h, boolean right, int color) {
         for (int row = 0; row < h; row++) {
             double t = (row + 0.5) / h;
@@ -106,8 +85,8 @@ final class Ui {
         int bw = Math.max(2, (int) Math.round(size * 0.3));
         int gap = Math.max(2, (int) Math.round(size * 0.24));
         int left = cx - (bw * 2 + gap) / 2;
-        roundRect(g, left, cy - size / 2, bw, size, 1, color);
-        roundRect(g, left + bw + gap, cy - size / 2, bw, size, 1, color);
+        g.fill(left, cy - size / 2, left + bw, cy + size / 2, color);
+        g.fill(left + bw + gap, cy - size / 2, left + bw * 2 + gap, cy + size / 2, color);
     }
 
     static void skip(GuiGraphicsExtractor g, int cx, int cy, int size, boolean forward, int color) {
@@ -117,27 +96,19 @@ final class Ui {
         int left = cx - total / 2;
         if (forward) {
             triangle(g, left, cy - size / 2, tw, size, true, color);
-            roundRect(g, left + tw + 1, cy - size / 2, bw, size, 1, color);
+            g.fill(left + tw + 1, cy - size / 2, left + tw + 1 + bw, cy + size / 2, color);
         } else {
-            roundRect(g, left, cy - size / 2, bw, size, 1, color);
+            g.fill(left, cy - size / 2, left + bw, cy + size / 2, color);
             triangle(g, left + bw + 1, cy - size / 2, tw, size, false, color);
         }
     }
 
-    static void equalizer(GuiGraphicsExtractor g, int x, int baseY, int bars, int barWidth, int gap,
-                          int maxHeight, int color, long nanos, boolean animate) {
-        double t = nanos / 1.0e9;
-        for (int i = 0; i < bars; i++) {
-            double v = animate ? 0.5 + 0.5 * Math.sin(t * (3.1 + i * 1.7) + i * 1.9) : 0.35 + 0.12 * i;
-            int h = Math.max(2, (int) Math.round(maxHeight * (0.25 + 0.75 * v)));
-            int bx = x + i * (barWidth + gap);
-            g.fill(bx, baseY - h, bx + barWidth, baseY, color);
+    static void dot(GuiGraphicsExtractor g, int x, int y, boolean filled, int color) {
+        if (filled) {
+            g.fill(x, y, x + 5, y + 5, color);
+        } else {
+            g.outline(x, y, 5, 5, color);
         }
-    }
-
-    static void placeholder(GuiGraphicsExtractor g, int x, int y, int size, int accent) {
-        roundRect(g, x, y, size, size, Math.max(4, size / 7), mix(accent, 0xFF0B0B10, 0.62));
-        equalizer(g, x + size / 2 - 11, y + size / 2 + 8, 4, 4, 2, 18, alpha(WHITE, 0.55), 0L, false);
     }
 
     static Component boldText(String s) {
@@ -159,12 +130,48 @@ final class Ui {
         return s + "...";
     }
 
-    static void text(GuiGraphicsExtractor g, Font font, String s, int x, int y, int color, boolean bold, boolean shadow) {
+    static void text(GuiGraphicsExtractor g, Font font, String s, int x, int y, int color, boolean bold) {
         if (bold) {
-            g.text(font, boldText(s), x, y, color, shadow);
+            g.text(font, boldText(s), x, y, color, false);
         } else {
-            g.text(font, s, x, y, color, shadow);
+            g.text(font, s, x, y, color, false);
         }
+    }
+
+    static void scaledText(GuiGraphicsExtractor g, Font font, String s, int x, int y, float scale, int color, boolean bold) {
+        g.pose().pushMatrix();
+        g.pose().translate((float) x, (float) y);
+        g.pose().scale(scale, scale);
+        text(g, font, s, 0, 0, color, bold);
+        g.pose().popMatrix();
+    }
+
+    static void marquee(GuiGraphicsExtractor g, Font font, String s, int x, int y, int w, float scale,
+                        int color, boolean bold, long nanos) {
+        int tw = (int) Math.ceil(width(font, s, bold) * scale);
+        if (tw <= w) {
+            scaledText(g, font, s, x, y, scale, color, bold);
+            return;
+        }
+        double over = tw - w;
+        double speed = 32.0;
+        double pause = 1.4;
+        double run = over / speed;
+        double total = 2 * (run + pause);
+        double m = (nanos / 1.0e9) % total;
+        double off;
+        if (m < pause) {
+            off = 0;
+        } else if (m < pause + run) {
+            off = (m - pause) * speed;
+        } else if (m < 2 * pause + run) {
+            off = over;
+        } else {
+            off = over - (m - 2 * pause - run) * speed;
+        }
+        g.enableScissor(x, y - 1, x + w, y + (int) Math.ceil(font.lineHeight * scale) + 2);
+        scaledText(g, font, s, (int) Math.round(x - off), y, scale, color, bold);
+        g.disableScissor();
     }
 
     static String time(double seconds) {
@@ -209,23 +216,26 @@ final class Ui {
         };
     }
 
+    static String initial(String title) {
+        if (title == null || title.isBlank()) {
+            return "-";
+        }
+        return new String(Character.toChars(Character.toUpperCase(title.codePointAt(0))));
+    }
+
     static int accent(int rgb) {
         if (rgb == 0) {
-            return DEFAULT_ACCENT;
+            return TEXT;
         }
         int r = (rgb >> 16) & 0xFF;
         int g = (rgb >> 8) & 0xFF;
         int b = rgb & 0xFF;
         int max = Math.max(r, Math.max(g, b));
-        if (max < 24) {
-            return DEFAULT_ACCENT;
+        if (max < 12) {
+            return TEXT;
         }
-        double k = Math.min(3.2, 215.0 / max);
-        double avg = (r + g + b) * k / 3.0;
-        return 0xFF000000
-                | channel(avg + (r * k - avg) * 1.35) << 16
-                | channel(avg + (g * k - avg) * 1.35) << 8
-                | channel(avg + (b * k - avg) * 1.35);
+        double k = max < 170 ? Math.min(3.0, 170.0 / max) : 1.0;
+        return 0xFF000000 | channel(r * k) << 16 | channel(g * k) << 8 | channel(b * k);
     }
 
     private static int channel(double v) {
